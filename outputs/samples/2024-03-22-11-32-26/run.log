@@ -1,0 +1,7 @@
+03/22/2024 11:32:26 - INFO - __main__ -   ===========================================================================
+03/22/2024 11:32:26 - INFO - __main__ -   Host ubuntu
+03/22/2024 11:32:26 - INFO - __main__ -   logging to:
+03/22/2024 11:32:26 - INFO - __main__ -   outputs/samples/2024-03-22-11-32-26
+03/22/2024 11:32:26 - INFO - __main__ -   ===========================================================================
+03/22/2024 11:32:26 - INFO - __main__ -   Loading checkpoint /home/parkjoe/.cache/diffusion_models_converted/ema_diffusion_cifar10_model/model-790000.ckpt
+03/22/2024 11:32:26 - INFO - __main__ -   Sampling data from 20 timesteps for calibration

@@ -1,0 +1,19 @@
+03/22/2024 15:33:52 - INFO - __main__ -   ===========================================================================
+03/22/2024 15:33:52 - INFO - __main__ -   Host ubuntu
+03/22/2024 15:33:52 - INFO - __main__ -   logging to:
+03/22/2024 15:33:52 - INFO - __main__ -   outputs/lsun_beds256/samples/2024-03-22-15-33-52
+03/22/2024 15:33:52 - INFO - __main__ -   ===========================================================================
+03/22/2024 15:33:52 - INFO - __main__ -   Loading model from models/ldm/lsun_beds256/model.ckpt
+03/22/2024 15:33:56 - INFO - ldm.util -   DiffusionWrapper has 274.06 M params.
+03/22/2024 15:33:57 - INFO - ldm.modules.diffusionmodules.model -   making attention of type 'vanilla' with 512 in_channels
+03/22/2024 15:33:57 - INFO - ldm.modules.diffusionmodules.model -   Working with z of shape (1, 3, 64, 64) = 12288 dimensions.
+03/22/2024 15:33:57 - INFO - ldm.modules.diffusionmodules.model -   making attention of type 'vanilla' with 512 in_channels
+03/22/2024 15:33:58 - INFO - __main__ -   global step: 1900000
+03/22/2024 15:33:58 - INFO - __main__ -   Switched to EMA weights
+03/22/2024 15:33:58 - INFO - __main__ -   Load with min-max quick initialization
+03/22/2024 15:34:14 - INFO - __main__ -   Using DDIM sampling with 400 sampling steps and eta=0.0
+03/22/2024 15:34:14 - INFO - __main__ -   Running unconditional sampling for 20 samples
+03/22/2024 15:35:13 - INFO - __main__ -   Throughput for this batch: 0.17187200653108906
+03/22/2024 15:36:12 - INFO - __main__ -   Throughput for this batch: 0.17036729619454383
+03/22/2024 15:36:13 - INFO - __main__ -   sampling of 19 images finished in 1.97 minutes.
+03/22/2024 15:36:13 - INFO - __main__ -   done.

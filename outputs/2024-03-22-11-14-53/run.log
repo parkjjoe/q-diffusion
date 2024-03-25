@@ -1,0 +1,25 @@
+03/22/2024 11:14:53 - INFO - root -   Loading model from models/ldm/stable-diffusion-v1/model.ckpt
+03/22/2024 11:14:55 - INFO - root -   Global Step: 470000
+03/22/2024 11:15:00 - INFO - ldm.util -   DiffusionWrapper has 859.52 M params.
+03/22/2024 11:15:00 - INFO - ldm.modules.diffusionmodules.model -   making attention of type 'vanilla' with 512 in_channels
+03/22/2024 11:15:00 - INFO - ldm.modules.diffusionmodules.model -   Working with z of shape (1, 4, 32, 32) = 4096 dimensions.
+03/22/2024 11:15:00 - INFO - ldm.modules.diffusionmodules.model -   making attention of type 'vanilla' with 512 in_channels
+03/22/2024 11:15:05 - INFO - __main__ -   Load with min-max quick initialization
+03/22/2024 11:15:05 - INFO - __main__ -   Not use gradient checkpointing for transformer blocks
+03/22/2024 11:15:23 - INFO - qdiff.quant_layer -   split at 1280!
+03/22/2024 11:15:23 - INFO - qdiff.quant_layer -   split at 1280!
+03/22/2024 11:15:24 - INFO - qdiff.quant_layer -   split at 1280!
+03/22/2024 11:15:25 - INFO - qdiff.quant_layer -   split at 1280!
+03/22/2024 11:15:27 - INFO - qdiff.quant_layer -   split at 1280!
+03/22/2024 11:15:30 - INFO - qdiff.quant_layer -   split at 1280!
+03/22/2024 11:15:33 - INFO - qdiff.quant_layer -   split at 1280!
+03/22/2024 11:15:34 - INFO - qdiff.quant_layer -   split at 640!
+03/22/2024 11:15:35 - INFO - qdiff.quant_layer -   split at 640!
+03/22/2024 11:15:36 - INFO - qdiff.quant_layer -   split at 640!
+03/22/2024 11:15:37 - INFO - qdiff.quant_layer -   split at 320!
+03/22/2024 11:15:38 - INFO - qdiff.quant_layer -   split at 320!
+03/22/2024 11:15:41 - INFO - root -   Creating invisible watermark encoder (see https://github.com/ShieldMnt/invisible-watermark)...
+03/22/2024 11:16:32 - INFO - root -   Your samples are ready and waiting for you here: 
+./2024-03-22-11-14-53 
+ 
+Enjoy.
