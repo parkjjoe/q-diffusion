@@ -27,6 +27,7 @@ from qdiff.utils import resume_cali_model, get_train_samples
 logger = logging.getLogger(__name__)
 
 
+# not used
 def torch2hwcuint8(x, clip=False):
     if clip:
         x = torch.clamp(x, -1, 1)
@@ -34,6 +35,7 @@ def torch2hwcuint8(x, clip=False):
     return x
 
 
+# generates a schedule for beta values for the diffusion process, supporting various schedules like quadratic, linear, constant, JSD, and sigmoid
 def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_timesteps):
     def sigmoid(x):
         return 1 / (np.exp(-x) + 1)
@@ -67,6 +69,7 @@ def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_time
     return betas
 
 
+# runs the diffusion sampling process
 class Diffusion(object):
     def __init__(self, args, config, device=None):
         self.args = args
@@ -107,6 +110,7 @@ class Diffusion(object):
         elif self.model_var_type == "fixedsmall":
             self.logvar = posterior_variance.clamp(min=1e-20).log()
 
+    # sets up the model, applying PTQ, and triggering the sampling process
     def sample(self):
         model = Model(self.config)
 
@@ -216,7 +220,7 @@ class Diffusion(object):
                         
                         kwargs = dict(
                             cali_data=cali_data, iters=self.args.cali_iters_a, act_quant=True, 
-                            opt_mode='mse', lr=self.args.cali_lr, p=self.args.cali_p)   
+                            opt_mode='mse', lr=self.args.cali_lr, p=self.args.cali_p)
                         recon_model(qnn)
                         qnn.set_quant_state(weight_quant=True, act_quant=True)   
 
@@ -245,6 +249,7 @@ class Diffusion(object):
         self.sample_fid(model)
         
 
+    # handles the generation of images for FID evaluation, including saving the generated images to disk
     def sample_fid(self, model):
         config = self.config
         img_id = len(glob.glob(f"{self.args.image_folder}/*"))
@@ -281,6 +286,8 @@ class Diffusion(object):
                     )
                     img_id += 1
 
+
+    # performs the actual sampling steps, supporting different sampling types (generalized, dpm_solver, ddpm_noisy) and managing the sequence of noise levels for the generation process
     def sample_image(self, x, model, last=True):
         try:
             skip = self.args.skip
@@ -347,6 +354,7 @@ class Diffusion(object):
         return x
 
 
+# sets up an argument parser for command-line options
 def get_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -477,6 +485,7 @@ def get_parser():
     return parser
 
 
+# converts a dictionary (typically loaded from a config file) into a namespace object for easier attribute access
 def dict2namespace(config):
     namespace = argparse.Namespace()
     for key, value in config.items():
@@ -487,26 +496,26 @@ def dict2namespace(config):
         setattr(namespace, key, new_value)
     return namespace
 
-
+########################################################################################################################
 if __name__ == "__main__":
     now = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
-    parser = get_parser()
+    parser = get_parser() # configuration
     args = parser.parse_args()
 
     # parse config file
     with open(args.config, "r") as f:
-        config = yaml.safe_load(f)
-    config = dict2namespace(config)
+        config = yaml.safe_load(f) # reads the configuration from the provided yaml file
+    config = dict2namespace(config) # convert the configuration into namespace
 
     # fix random seed
-    seed_everything(args.seed)
+    seed_everything(args.seed) # initialize all random seeds to user-specified values
 
     # setup logger
     logdir = os.path.join(args.logdir, "samples", now)
     os.makedirs(logdir)
     args.logdir = logdir
-    log_path = os.path.join(logdir, "run.log")
+    log_path = os.path.join(logdir, "run.log") # save run.log file
     logging.basicConfig(
         format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
         datefmt='%m/%d/%Y %H:%M:%S',
@@ -521,7 +530,7 @@ if __name__ == "__main__":
     logger.info(75 * "=")
     logger.info(f"Host {os.uname()[1]}")
     logger.info("logging to:")
-    imglogdir = os.path.join(logdir, "img")
+    imglogdir = os.path.join(logdir, "img") # create a directory to store the created image
     args.image_folder = imglogdir
 
     os.makedirs(imglogdir)
@@ -529,4 +538,4 @@ if __name__ == "__main__":
     logger.info(75 * "=")
 
     runner = Diffusion(args, config)
-    runner.sample()
+    runner.sample() # starts the image generation process
