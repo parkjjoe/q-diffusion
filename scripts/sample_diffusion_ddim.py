@@ -1,6 +1,7 @@
 import argparse, os, gc, glob, datetime, yaml
 import logging
 import math
+import torch_fidelity
 
 import numpy as np
 import tqdm
@@ -84,7 +85,7 @@ class Diffusion(object):
         self.device = device
 
         self.model_var_type = config.model.var_type
-        betas = get_beta_schedule(
+        betas = get_beta_schedule( # calculate beta of diffusion process
             beta_schedule=config.diffusion.beta_schedule,
             beta_start=config.diffusion.beta_start,
             beta_end=config.diffusion.beta_end,
@@ -93,26 +94,26 @@ class Diffusion(object):
         self.betas = torch.from_numpy(betas).float()
         self.betas = self.betas.to(self.device)
         betas = self.betas
-        self.num_timesteps = betas.shape[0]
+        self.num_timesteps = betas.shape[0] # set the total time steps in the diffusion process using beta tensor length
 
-        alphas = 1.0 - betas
+        alphas = 1.0 - betas # complementary value of beta
         alphas_cumprod = alphas.cumprod(dim=0)
         alphas_cumprod_prev = torch.cat(
             [torch.ones(1).to(device), alphas_cumprod[:-1]], dim=0
         )
-        posterior_variance = (
+        posterior_variance = ( # calculate the posterior variance for each step in the diffusion process (indicating how much variability is added to each step during diffusion)
             betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
         )
-        if self.model_var_type == "fixedlarge":
+        if self.model_var_type == "fixedlarge": # set the log value of beta to logvar, if the var_type of model is "fixedlarge" (can be checked in config)
             self.logvar = betas.log()
             # torch.cat(
             # [posterior_variance[1:2], betas[1:]], dim=0).log()
-        elif self.model_var_type == "fixedsmall":
+        elif self.model_var_type == "fixedsmall": # set the log value of the posterior variance to logvar, if the var_type of model is "fixedsmall"
             self.logvar = posterior_variance.clamp(min=1e-20).log()
 
     # sets up the model, applying PTQ, and triggering the sampling process
     def sample(self):
-        model = Model(self.config)
+        model = Model(self.config) # diffusion model instance
 
         # This used the pretrained DDPM model, see https://github.com/pesser/pytorch_diffusion
         if self.config.data.dataset == "CIFAR10":
@@ -121,15 +122,15 @@ class Diffusion(object):
             name = f"lsun_{self.config.data.category}"
         else:
             raise ValueError
-        ckpt = get_ckpt_path(f"ema_{name}")
+        ckpt = get_ckpt_path(f"ema_{name}") # EMA (Expotential Moving Average): a model with smoothed weights
         logger.info("Loading checkpoint {}".format(ckpt))
-        model.load_state_dict(torch.load(ckpt, map_location=self.device))
+        model.load_state_dict(torch.load(ckpt, map_location=self.device)) # apply pre-trained weights to the model
         
         model.to(self.device)
         model.eval()
         assert(self.args.cond == False)
         if self.args.ptq:
-            if self.args.quant_mode == 'qdiff':
+            if self.args.quant_mode == 'qdiff': # set quantization parameters for weights and acts in dict form
                 wq_params = {'n_bits': args.weight_bit, 'channel_wise': True, 'scale_method': 'max'}
                 aq_params = {'n_bits': args.act_bit, 'symmetric': args.a_sym, 'channel_wise': False, 'scale_method': 'max', 'leaf_param': args.quant_act}
                 if self.args.resume:
@@ -138,27 +139,27 @@ class Diffusion(object):
                     aq_params['scale_method'] = 'max'
                 if self.args.resume_w:
                     wq_params['scale_method'] = 'max'
-                qnn = QuantModel(
+                qnn = QuantModel( # create a quantized version of a given model
                     model=model, weight_quant_params=wq_params, act_quant_params=aq_params, 
                     sm_abit=self.args.sm_abit)
                 qnn.to(self.device)
                 qnn.eval()
 
-                if self.args.resume:
+                if self.args.resume: # if 'resume' is enabled, predefined data is used; otherwise, data in 'cali_data_path' is used for calibration
                     image_size = self.config.data.image_size
                     channels = self.config.data.channels
                     cali_data = (torch.randn(1, channels, image_size, image_size), torch.randint(0, 1000, (1,)))
-                    resume_cali_model(qnn, args.cali_ckpt, cali_data, args.quant_act, "qdiff", cond=False)
+                    resume_cali_model(qnn, args.cali_ckpt, cali_data, args.quant_act, "qdiff", cond=False) # load pre-saved calibration model
                 else:
                     logger.info(f"Sampling data from {self.args.cali_st} timesteps for calibration")
                     sample_data = torch.load(self.args.cali_data_path)
-                    cali_data = get_train_samples(self.args, sample_data, custom_steps=0)
+                    cali_data = get_train_samples(self.args, sample_data, custom_steps=0) # prepare training samples for calibration
                     del(sample_data)
                     gc.collect()
                     logger.info(f"Calibration data shape: {cali_data[0].shape} {cali_data[1].shape}")
 
                     cali_xs, cali_ts = cali_data
-                    if self.args.resume_w:
+                    if self.args.resume_w: # 'resume_w': load pre-saved weights
                         resume_cali_model(qnn, self.args.cali_ckpt, cali_data, False, cond=False)
                     else:
                         logger.info("Initializing weight quantization parameters")
@@ -171,14 +172,15 @@ class Diffusion(object):
                                 iters=self.args.cali_iters, weight=0.01, asym=True, b_range=(20, 2),
                                 warmup=0.2, act_quant=False, opt_mode='mse')
 
+                    # optimize the weights of the quantized model and adjust the modecl's performance to be similar to the original
                     def recon_model(model):
                         """
                         Block reconstruction. For the first and last layers, we can only apply layer reconstruction.
                         """
                         for name, module in model.named_children():
                             logger.info(f"{name} {isinstance(module, BaseQuantBlock)}")
-                            if isinstance(module, QuantModule):
-                                if module.ignore_reconstruction is True:
+                            if isinstance(module, QuantModule): # reconstruct of 'QuantModule' and 'BaseQuantBlock' according to specific condition
+                                if module.ignore_reconstruction is True: # decide whether to reconstruct or not
                                     logger.info('Ignore reconstruction of layer {}'.format(name))
                                     continue
                                 else:
@@ -194,11 +196,11 @@ class Diffusion(object):
                             else:
                                 recon_model(module)
 
-                    if not self.args.resume_w:
+                    if not self.args.resume_w: # if 'resume_w' is disabled, call 'recon_model' to perform weight calibration
                         logger.info("Doing weight calibration")
                         recon_model(qnn)
                         qnn.set_quant_state(weight_quant=True, act_quant=False)
-                    if self.args.quant_act:
+                    if self.args.quant_act: # if 'quant_act' is enabled, proceed with act calibration
                         logger.info("UNet model")
                         logger.info(model)                    
                         logger.info("Doing activation calibration")   
@@ -209,7 +211,7 @@ class Diffusion(object):
                             # _ = qnn(cali_xs[:64].cuda(), cali_ts[:64].cuda())
                             _ = qnn(cali_xs[inds].cuda(), cali_ts[inds].cuda())
                         
-                            if self.args.running_stat:
+                            if self.args.running_stat: # if 'running_stat' is enabled, do dynamic statistical computation of act quantization
                                 logger.info('Running stat for activation quantization')
                                 qnn.set_running_stat(True)
                                 for i in range(int(cali_xs.size(0) / 64)):
@@ -235,7 +237,7 @@ class Diffusion(object):
                                     m.zero_point = nn.Parameter(torch.tensor(float(m.zero_point)))
                                 else:
                                     m.zero_point = nn.Parameter(m.zero_point)
-                    torch.save(qnn.state_dict(), os.path.join(self.args.logdir, "ckpt.pth"))
+                    torch.save(qnn.state_dict(), os.path.join(self.args.logdir, "ckpt.pth")) # if 'resume' is disabled, save a quantized model
 
                 model = qnn
 
@@ -257,15 +259,15 @@ class Diffusion(object):
         total_n_samples = self.args.max_images
         n_rounds = math.ceil((total_n_samples - img_id) / config.sampling.batch_size)
 
-        torch.manual_seed(self.args.seed)
+        torch.manual_seed(self.args.seed) # ensure reproducibility of results with seed setting
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(self.args.seed)
         with torch.no_grad():
             for i in tqdm.tqdm(
                 range(n_rounds), desc="Generating image samples for FID evaluation."
             ):
-                n = config.sampling.batch_size
-                x = torch.randn(
+                n = config.sampling.batch_size # create images with the sampling batch size specified in config (yaml file)
+                x = torch.randn( # a tensor to store generated initial noisy images
                     n,
                     config.data.channels,
                     config.data.image_size,
@@ -275,14 +277,14 @@ class Diffusion(object):
 
                 with amp.autocast(enabled=False):
                     x = self.sample_image(x, model)
-                x = inverse_data_transform(config, x)
+                x = inverse_data_transform(config, x) # convert model output to real image data format
 
                 if img_id + x.shape[0] > self.args.max_images:
                     assert(i == n_rounds - 1)
                     n = self.args.max_images - img_id
                 for i in range(n):
                     tvu.save_image(
-                        x[i], os.path.join(self.args.image_folder, f"{img_id}.png")
+                        x[i], os.path.join(self.args.image_folder, f"{img_id}.png") # save to specified directory
                     )
                     img_id += 1
 
@@ -290,15 +292,15 @@ class Diffusion(object):
     # performs the actual sampling steps, supporting different sampling types (generalized, dpm_solver, ddpm_noisy) and managing the sequence of noise levels for the generation process
     def sample_image(self, x, model, last=True):
         try:
-            skip = self.args.skip
+            skip = self.args.skip # sampling interval
         except Exception:
             skip = 1
 
-        if self.args.sample_type == "generalized":
-            if self.args.skip_type == "uniform":
+        if self.args.sample_type == "generalized": # when sampling in normal way
+            if self.args.skip_type == "uniform": # set time step at uniform intervals
                 skip = self.num_timesteps // self.args.timesteps
                 seq = range(0, self.num_timesteps, skip)
-            elif self.args.skip_type == "quad":
+            elif self.args.skip_type == "quad": # set time step at quad intervals
                 seq = (
                     np.linspace(
                         0, np.sqrt(self.num_timesteps * 0.8), self.args.timesteps
@@ -311,10 +313,10 @@ class Diffusion(object):
             from ddim.functions.denoising import generalized_steps
 
             betas = self.betas
-            xs = generalized_steps(
+            xs = generalized_steps( # perform diffusion process for set time steps
                 x, seq, model, betas, eta=self.args.eta, args=self.args)
             x = xs
-        elif self.args.sample_type == "dpm_solver":
+        elif self.args.sample_type == "dpm_solver": # when sampling with the DPM Solver
             logger.info(f"use dpm-solver with {self.args.timesteps} steps")
             noise_schedule = NoiseScheduleVP(schedule='discrete', betas=self.betas)
             model_fn = model_wrapper(
@@ -330,11 +332,11 @@ class Diffusion(object):
                 skip_type="time_uniform",
                 method="singlestep",
             )
-        elif self.args.sample_type == "ddpm_noisy":
-            if self.args.skip_type == "uniform":
+        elif self.args.sample_type == "ddpm_noisy": # when sampling with the DDPM Noisy
+            if self.args.skip_type == "uniform": # set time step at uniform intervals
                 skip = self.num_timesteps // self.args.timesteps
                 seq = range(0, self.num_timesteps, skip)
-            elif self.args.skip_type == "quad":
+            elif self.args.skip_type == "quad": # set time step at quad intervals
                 seq = (
                     np.linspace(
                         0, np.sqrt(self.num_timesteps * 0.8), self.args.timesteps
@@ -357,131 +359,40 @@ class Diffusion(object):
 # sets up an argument parser for command-line options
 def get_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--config", type=str, required=True, help="Path to the config file"
-    )
-    parser.add_argument("--seed", type=int, default=1234, help="Random seed")
-    parser.add_argument(
-        "-l",
-        "--logdir",
-        type=str,
-        nargs="?",
-        help="extra logdir",
-        default="none"
-    )
-    parser.add_argument("--use_pretrained", action="store_true")
-    parser.add_argument(
-        "--sample_type",
-        type=str,
-        default="generalized",
-        help="sampling approach (generalized or ddpm_noisy)",
-    )
-    parser.add_argument(
-        "--skip_type",
-        type=str,
-        default="uniform",
-        help="skip according to (uniform or quadratic)",
-    )
-    parser.add_argument(
-        "--timesteps", type=int, default=1000, help="number of steps involved"
-    )
-    parser.add_argument(
-        "--eta",
-        type=float,
-        default=0.0,
-        help="eta used to control the variances of sigma",
-    )
-    parser.add_argument("--sequence", action="store_true")
-    parser.add_argument(
-        "--ptq", action="store_true", help="apply post-training quantization"
-    )
-    parser.add_argument(
-        "--quant_act", action="store_true", 
-        help="if to quantize activations when ptq==True"
-    )
-    parser.add_argument(
-        "--weight_bit",
-        type=int,
-        default=8,
-        help="int bit for weight quantization",
-    )
-    parser.add_argument(
-        "--act_bit",
-        type=int,
-        default=8,
-        help="int bit for activation quantization",
-    )
-    parser.add_argument(
-        "--quant_mode", type=str, default="qdiff", 
-        choices=["qdiff"], 
-        help="quantization mode to use"
-    )
-    parser.add_argument(
-        "--max_images", type=int, default=50000, help="number of images to sample"
-    )
+    parser.add_argument("--config", type=str, required=True, help="Path to the config file") # config file path
+    parser.add_argument("--seed", type=int, default=1234, help="Random seed") # seed value to use when generating random numbers
+    parser.add_argument("-l", "--logdir", type=str, nargs="?", help="extra logdir", default="none") # additional directory to save log files
+    parser.add_argument("--use_pretrained", action="store_true") # whether to use a pretrained model
+    parser.add_argument("--sample_type", type=str, default="generalized", help="sampling approach (generalized or ddpm_noisy)", ) # sampling method (generalized or ddpm_noisy
+    parser.add_argument("--skip_type", type=str, default="uniform", help="skip according to (uniform or quadratic)", ) # time step selection method (uniform or quad)
+    parser.add_argument("--timesteps", type=int, default=1000, help="number of steps involved") # total time steps to use for sampling
+    parser.add_argument("--eta", type=float, default=0.0, help="eta used to control the variances of sigma", ) # ETA used to control the variances of sigma
+    parser.add_argument("--sequence", action="store_true") # whether to use sequence
+    parser.add_argument("--ptq", action="store_true", help="apply post-training quantization") # whether to apply PTQ
+    parser.add_argument("--quant_act", action="store_true", help="if to quantize activations when ptq==True") # whether to apply act quantization
+    parser.add_argument("--weight_bit", type=int, default=8, help="int bit for weight quantization", ) # number of bits to be used for weight quantization
+    parser.add_argument("--act_bit", type=int, default=8, help="int bit for activation quantization", ) # number of bits to be used for act quantization
+    parser.add_argument("--quant_mode", type=str, default="qdiff", choices=["qdiff"], help="quantization mode to use") # quantization mode
+    parser.add_argument("--max_images", type=int, default=50000, help="number of images to sample") # maximum number of images to sample
 
     # qdiff specific configs
-    parser.add_argument(
-        "--cali_st", type=int, default=1, 
-        help="number of timesteps used for calibration"
-    )
-    parser.add_argument(
-        "--cali_batch_size", type=int, default=32, 
-        help="batch size for qdiff reconstruction"
-    )
-    parser.add_argument(
-        "--cali_n", type=int, default=1024, 
-        help="number of samples for each timestep for qdiff reconstruction"
-    )
-    parser.add_argument(
-        "--cali_iters", type=int, default=20000, 
-        help="number of iterations for each qdiff reconstruction"
-    )
-    parser.add_argument('--cali_iters_a', default=5000, type=int, 
-        help='number of iteration for LSQ')
-    parser.add_argument('--cali_lr', default=4e-4, type=float, 
-        help='learning rate for LSQ')
-    parser.add_argument('--cali_p', default=2.4, type=float, 
-        help='L_p norm minimization for LSQ')
-    parser.add_argument(
-        "--cali_ckpt", type=str,
-        help="path for calibrated model ckpt"
-    )
-    parser.add_argument(
-        "--cali_data_path", type=str, default="sd_coco_sample1024_allst.pt",
-        help="calibration dataset name"
-    )
-    parser.add_argument(
-        "--resume", action="store_true",
-        help="resume the calibrated qdiff model"
-    )
-    parser.add_argument(
-        "--resume_w", action="store_true",
-        help="resume the calibrated qdiff model weights only"
-    )
-    parser.add_argument(
-        "--cond", action="store_true",
-        help="whether to use conditional guidance"
-    )
-    parser.add_argument(
-        "--a_sym", action="store_true",
-        help="act quantizers use symmetric quantization"
-    )
-    parser.add_argument(
-        "--running_stat", action="store_true",
-        help="use running statistics for act quantizers"
-    )
-    parser.add_argument(
-        "--sm_abit",type=int, default=8,
-        help="attn softmax activation bit"
-    )
-    parser.add_argument("--split", action="store_true",
-        help="split shortcut connection into two parts"
-    )
-    parser.add_argument(
-        "--verbose", action="store_true",
-        help="print out info like quantized model arch"
-    )
+    parser.add_argument("--cali_st", type=int, default=1, help="number of timesteps used for calibration") # number of time steps to be used for quantization calibration
+    parser.add_argument("--cali_batch_size", type=int, default=32, help="batch size for qdiff reconstruction") # batch size to use for calibration
+    parser.add_argument("--cali_n", type=int, default=1024, help="number of samples for each timestep for qdiff reconstruction") # number of samples for each time step for qdiff
+    parser.add_argument("--cali_iters", type=int, default=20000, help="number of iterations for each qdiff reconstruction") # number of iterations for calibration
+    parser.add_argument('--cali_iters_a', default=5000, type=int, help='number of iteration for LSQ') # additional calibration settings
+    parser.add_argument('--cali_lr', default=4e-4, type=float, help='learning rate for LSQ') # additional calibration settings
+    parser.add_argument('--cali_p', default=2.4, type=float, help='L_p norm minimization for LSQ') # additional calibration settings
+    parser.add_argument("--cali_ckpt", type=str, help="path for calibrated model ckpt") # quantized model checkpoint file path
+    parser.add_argument("--cali_data_path", type=str, default="sd_coco_sample1024_allst.pt", help="calibration dataset name") # calibration dataset path
+    parser.add_argument("--resume", action="store_true", help="resume the calibrated qdiff model") # whether to continue using the quantized model
+    parser.add_argument("--resume_w", action="store_true", help="resume the calibrated qdiff model weights only") # whether to use quantized weights sequentially
+    parser.add_argument("--cond", action="store_true", help="whether to use conditional guidance") # whether to use conditional guidance
+    parser.add_argument("--a_sym", action="store_true", help="act quantizers use symmetric quantization") # whether to use symmetric quantization when act quantization
+    parser.add_argument("--running_stat", action="store_true", help="use running statistics for act quantizers") # whetehr to use running statistics for act quantization
+    parser.add_argument("--sm_abit",type=int, default=8, help="attn softmax activation bit") # number of act quantization bits to use in attention softmax operation
+    parser.add_argument("--split", action="store_true", help="split shortcut connection into two parts") # whether to decide whether to split the shortcut connection into 2 parts
+    parser.add_argument("--verbose", action="store_true", help="print out info like quantized model arch") # whether to output information such as quantized model architecture
     return parser
 
 
@@ -500,22 +411,22 @@ def dict2namespace(config):
 if __name__ == "__main__":
     now = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
-    parser = get_parser() # configuration
+    parser = get_parser() # 1: configuration
     args = parser.parse_args()
 
     # parse config file
     with open(args.config, "r") as f:
         config = yaml.safe_load(f) # reads the configuration from the provided yaml file
-    config = dict2namespace(config) # convert the configuration into namespace
+    config = dict2namespace(config) # 2: convert the configuration into namespace
 
     # fix random seed
-    seed_everything(args.seed) # initialize all random seeds to user-specified values
+    seed_everything(args.seed) # 3: initialize all random seeds to user-specified values
 
     # setup logger
     logdir = os.path.join(args.logdir, "samples", now)
     os.makedirs(logdir)
     args.logdir = logdir
-    log_path = os.path.join(logdir, "run.log") # save run.log file
+    log_path = os.path.join(logdir, "run.log") # 4: save run.log file
     logging.basicConfig(
         format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
         datefmt='%m/%d/%Y %H:%M:%S',
@@ -527,10 +438,14 @@ if __name__ == "__main__":
     )
     logger = logging.getLogger(__name__)
 
+    args_dict = vars(args)
+    for idx, val in args_dict.items():
+        logger.info(f"{idx}: {val}")
+
     logger.info(75 * "=")
     logger.info(f"Host {os.uname()[1]}")
     logger.info("logging to:")
-    imglogdir = os.path.join(logdir, "img") # create a directory to store the created image
+    imglogdir = os.path.join(logdir, "img") # 5: create a directory to store the created image
     args.image_folder = imglogdir
 
     os.makedirs(imglogdir)
@@ -538,4 +453,4 @@ if __name__ == "__main__":
     logger.info(75 * "=")
 
     runner = Diffusion(args, config)
-    runner.sample() # starts the image generation process
+    runner.sample() # 6: starts the image generation process

@@ -14,14 +14,15 @@ class QuantModel(nn.Module):
     def __init__(self, model: nn.Module, weight_quant_params: dict = {}, act_quant_params: dict = {}, **kwargs):
         super().__init__()
         self.model = model
-        self.sm_abit = kwargs.get('sm_abit', 8)
+        self.sm_abit = kwargs.get('sm_abit', 8) # number of bits to use for softmax
         self.in_channels = model.in_channels
         if hasattr(model, 'image_size'):
             self.image_size = model.image_size
-        self.specials = get_specials(act_quant_params['leaf_param'])
+        self.specials = get_specials(act_quant_params['leaf_param']) # layer type information requiring special handling
         self.quant_module_refactor(self.model, weight_quant_params, act_quant_params)
         self.quant_block_refactor(self.model, weight_quant_params, act_quant_params)
 
+    # replace layers with quantization module
     def quant_module_refactor(self, module: nn.Module, weight_quant_params: dict = {}, act_quant_params: dict = {}):
         """
         Recursively replace the normal layers (conv2D, conv1D, Linear etc.) to QuantModule
@@ -42,6 +43,7 @@ class QuantModel(nn.Module):
             else:
                 self.quant_module_refactor(child_module, weight_quant_params, act_quant_params)
 
+    # replace blocks with quantization block
     def quant_block_refactor(self, module: nn.Module, weight_quant_params: dict = {}, act_quant_params: dict = {}):
         for name, child_module in module.named_children():
             if type(child_module) in self.specials:
@@ -60,6 +62,7 @@ class QuantModel(nn.Module):
             else:
                 self.quant_block_refactor(child_module, weight_quant_params, act_quant_params)
 
+    # quantization status of weights and act on/off
     def set_quant_state(self, weight_quant: bool = False, act_quant: bool = False):
         for m in self.model.modules():
             if isinstance(m, (QuantModule, BaseQuantBlock)):
@@ -67,7 +70,8 @@ class QuantModel(nn.Module):
 
     def forward(self, x, timesteps=None, context=None):
         return self.model(x, timesteps, context)
-    
+
+    # manage dynamic statistics of quantized layers to better reflect changes in data
     def set_running_stat(self, running_stat: bool, sm_only=False):
         for m in self.model.modules():
             if isinstance(m, QuantBasicTransformerBlock):
@@ -86,6 +90,7 @@ class QuantModel(nn.Module):
             if isinstance(m, QuantModule) and not sm_only:
                 m.set_running_stat(running_stat)
 
+    # gradient checkpoint on/off
     def set_grad_ckpt(self, grad_ckpt: bool):
         for name, m in self.model.named_modules():
             if isinstance(m, (QuantBasicTransformerBlock, BasicTransformerBlock)):

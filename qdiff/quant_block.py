@@ -17,6 +17,7 @@ from ddim.models.diffusion import ResnetBlock, AttnBlock, nonlinearity
 logger = logging.getLogger(__name__)
 
 
+# manage quantization of act via `act_quantizer` (activation quantizer) and `StraightThrough()` (act function)
 class BaseQuantBlock(nn.Module):
     """
     Base implementation of block structures for all networks.
@@ -41,6 +42,7 @@ class BaseQuantBlock(nn.Module):
                 m.set_quant_state(weight_quant, act_quant)
 
 
+# act quantization is possible through the quantization function (`act_quantizer`) provided by BaseQuantBlock
 class QuantResBlock(BaseQuantBlock, TimestepBlock):
     def __init__(
         self, res: ResBlock, act_quant_params: dict = {}):
@@ -111,6 +113,7 @@ class QuantResBlock(BaseQuantBlock, TimestepBlock):
         return self.skip_connection(x) + h
 
 
+# perform quantized matrix multiplication of Query and Key
 class QuantQKMatMul(BaseQuantBlock):
     def __init__(
         self, act_quant_params: dict = {}):
@@ -121,13 +124,13 @@ class QuantQKMatMul(BaseQuantBlock):
         self.act_quantizer_k = UniformAffineQuantizer(**act_quant_params)
         
     def forward(self, q, k):
-        if self.use_act_quant:
+        if self.use_act_quant: # when quantization is enabled, Query and Key are quantized with each quantizer
             quant_q = self.act_quantizer_q(q * self.scale)
             quant_k = self.act_quantizer_k(k * self.scale)
-            weight = th.einsum(
+            weight = th.einsum( # perform matrix multiplication
                 "bct,bcs->bts", quant_q, quant_k
             ) 
-        else:
+        else: # when quantization is disabled, apply scale to the original Query and Key and then perform multiplication
             weight = th.einsum(
                 "bct,bcs->bts", q * self.scale, k * self.scale
             )
@@ -150,9 +153,9 @@ class QuantSMVMatMul(BaseQuantBlock):
         self.act_quantizer_w = UniformAffineQuantizer(**act_quant_params_w)
         
     def forward(self, weight, v):
-        if self.use_act_quant:
-            a = th.einsum("bts,bcs->bct", self.act_quantizer_w(weight), self.act_quantizer_v(v))
-        else:
+        if self.use_act_quant: # when quantization is enabled, weights and Value are quantized with each quantizer
+            a = th.einsum("bts,bcs->bct", self.act_quantizer_w(weight), self.act_quantizer_v(v)) # perform matrix multiplication
+        else: # when quantization is disabled, use the original weight and Value
             a = th.einsum("bts,bcs->bct", weight, v)
         return a
 
@@ -386,6 +389,7 @@ class QuantAttnBlock(BaseQuantBlock):
         return out
 
 
+# create and return dict that maps the quantized layer type corresponding to a specific layer type
 def get_specials(quant_act=False):
     specials = {
         ResBlock: QuantResBlock,
